@@ -46,6 +46,13 @@ def eval_once_test(sess,eval_correct,imgs_pl,lbls_pl,data_set):
 	#print('Testing Data Eval:')
 	print(' Accuracy: %0.04f' %(true_count))
 
+def conv2d(x, W,name):
+  return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME', name = name)
+
+def max_pool_3x3(x,name):
+  return tf.nn.max_pool(x, ksize=[1, 3, 3, 1],strides=[1, 2, 2, 1], padding='SAME', name = name)
+
+
 FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string('log_dir', '/tmp/tensorflow/parallel/',"""Directory to write the event file and chkpoints""")
@@ -58,31 +65,33 @@ tf.app.flags.DEFINE_string('fake_data',False, " ")
 
 images = tf.placeholder(tf.float32,[None,3072])
 labels = tf.placeholder(tf.float32,[None,10])
+x_image = tf.reshape(images, [-1,32,32,3])
 
-w1_0 = tf.Variable(tf.truncated_normal([3072,2048],stddev = 0.01), name = 'task_0_w1')
-b1_0 = tf.Variable(tf.constant(0.1,shape = [2048]),name = 'task_0_b1')
+w1_0 = tf.Variable(tf.truncated_normal([5,5,3,1024],stddev = 0.01), name = 'task_0_w1')
+b1_0 = tf.Variable(tf.constant(0.1,shape = [1024]),name = 'task_0_b1')
 l2_w1_0 = tf.nn.l2_loss(w1_0)
-h1_task0 = tf.matmul(images,w1_0)+b1_0
+h1_task0 = tf.nn.relu(conv2d(x_image,w1_0,"conv1")+b1_0, name = "relu1")
 
-w2_0 = tf.Variable(tf.truncated_normal([2048,2048],stddev = 0.01), name = 'task_0_w2')
-b2_0 = tf.Variable(tf.constant(0.1,shape = [2048]),name = 'task_0_b2')
+w2_0 = tf.Variable(tf.truncated_normal([5,5,1024,512],stddev = 0.01), name = 'task_0_w2')
+b2_0 = tf.Variable(tf.constant(0.1,shape = [512]),name = 'task_0_b2')
 l2_w2_0 = tf.nn.l2_loss(w2_0)	
-h2_task0 = tf.matmul(h1_task0,w2_0)+b2_0
+h2_task0 = tf.nn.relu(conv2d(h1_task0,w2_0,"conv2")+b2_0, name = "relu2")
 
-w3_0 = tf.Variable(tf.truncated_normal([2048,2048],stddev = 0.01), name = 'task_0_w3')
-b3_0 = tf.Variable(tf.constant(0.1,shape = [2048]),name = 'task_0_b3')
+w3_0 = tf.Variable(tf.truncated_normal([5,5,512,512],stddev = 0.01), name = 'task_0_w3')
+b3_0 = tf.Variable(tf.constant(0.1,shape = [512]),name = 'task_0_b3')
 l2_w3_0 = tf.nn.l2_loss(w3_0)
-h3_task0 = tf.matmul(h2_task0,w3_0)+b3_0
+h3_task0 = max_pool_3x3(tf.nn.relu(conv2d(h2_task0,w3_0,"conv3")+b3_0, name = "relu3"),"pool1")
 
-w4_0 = tf.Variable(tf.truncated_normal([2048,2048],stddev = 0.01), name = 'task_0_w4')
-b4_0 = tf.Variable(tf.constant(0.1,shape = [2048]),name = 'task_0_b4')
+w4_0 = tf.Variable(tf.truncated_normal([5,5,512,512],stddev = 0.01), name = 'task_0_w4')
+b4_0 = tf.Variable(tf.constant(0.1,shape = [512]),name = 'task_0_b4')
 l2_w4_0 = tf.nn.l2_loss(w4_0)
-h4_task0 = tf.matmul(h3_task0,w4_0)+b4_0
+h4_task0 = tf.nn.relu(conv2d(h3_task0,w4_0,"conv4")+b4_0, name = "relu4")
 
-w5_0 = tf.Variable(tf.truncated_normal([2048,10],stddev = 0.01), name = 'task_0_w5')
+w5_0 = tf.Variable(tf.truncated_normal([16*16*512,10],stddev = 0.01), name = 'task_0_w5')
 b5_0 = tf.Variable(tf.constant(0.1,shape = [10]),name = 'task_0_b5')
 l2_w5_0 = tf.nn.l2_loss(w5_0)
-h5_task0 = tf.matmul(h4_task0,w5_0) + b5_0
+h4_task0_reshape = tf.reshape(h4_task0,[-1,16*16*512])
+h5_task0 = tf.matmul(h4_task0_reshape,w5_0) + b5_0
 
 l2_t0 = l2_w1_0 + l2_w2_0 + l2_w3_0 + l2_w4_0 + l2_w5_0
 	
@@ -142,20 +151,25 @@ with tf.Session(config = config) as sess:
 	k=0
 	while k<10:
 		loss_value = 0
+		true_count = 0
+		start_time_epoch = time.time()
 		for i in range(5):	# Iterating on the number of batches
 			start_time = time.time()
 			batch = data_sets[i]
 			lbls_data = one_hot(np.array(batch['labels']))
 			imgs_data = np.array(batch['data'])
-			for j in range(1):	#Iterating on mini batches of a given batch
-				mini_batch_imgs = imgs_data[j*10000:(j+1)*10000,:]
-				mini_batch_lbls = lbls_data[j*10000:(j+1)*10000,:]
+			for j in range(25):	#Iterating on mini batches of a given batch
+				mini_batch_imgs = imgs_data[j*400:(j+1)*400,:]
+				mini_batch_lbls = lbls_data[j*400:(j+1)*400,:]
 				feed_dict = fill_feed_dict(mini_batch_imgs,mini_batch_lbls,images,labels)
-				_,loss_val,step = sess.run([train_op,loss,global_step], feed_dict = feed_dict)
+				_,loss_val,step,count = sess.run([train_op,loss,global_step,eval_correct], feed_dict = feed_dict)
 				loss_value+=loss_val
+				true_count+= count
 			duration = time.time()-start_time
 			print("batch %d in %.3f sec"%(i+1,duration))
-		loss_value/=25
-		eval_once_test(sess,eval_correct,images,labels,inputdata.test_batch)
-		print("Epoch %d loss_value %.4f"%(k+1,loss_value))
+		loss_value/=125
+		true_count/=125.0
+		duration_epoch = time.time()-start_time_epoch
+		print("Epoch %d accuracy %.4f loss_value %.4f in %.3f"%(k+1,true_count,loss_value,duration_epoch))
 		k+=1
+	eval_once_test(sess,eval_correct,images,labels,inputdata.test_batch)
